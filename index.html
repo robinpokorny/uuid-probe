@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UUID Probe</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2210 0 100 100%22><text y=%22.90em%22 font-size=%2290%22>📡</text></svg>"></link>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.jade.min.css"
+    />
+    <style>
+      #uuidDisplay,
+      #uuidTable {
+        font-family: "MonoLisa", monospace;
+      }
+      #uuidDisplay span {
+        padding: 0.125rem 0.25rem;
+      }
+      #uuidTable {
+        display: grid;
+        grid-template-columns: repeat(32, 1fr);
+        gap: 2px;
+        margin-top: 10px;
+      }
+      .bit {
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        user-select: none;
+        text-align: center;
+        font-size: 18px;
+        margin-bottom: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="container">
+      <hgroup>
+        <h1>📡 UUID Probe</h1>
+        <p>
+          A
+          <a href="https://www.rfc-editor.org/rfc/rfc9562.html">RFC 9562</a>
+          compliant UUID decoder and inspector
+        </p>
+      </hgroup>
+    </header>
+    <main class="container">
+      <section>
+        <input
+          type="text"
+          id="uuidInput"
+          placeholder="Enter UUID or generate one"
+          onblur="acceptInput"
+        />
+        <button type="button" class="outline" onclick="generateUUIDv4()">
+          Generate UUID v4
+        </button>
+        <button type="button" class="outline" onclick="generateUUIDv7()">
+          Generate UUID v7
+        </button>
+        <button type="button" class="outline" onclick="setToNil()">
+          Set to Nil
+        </button>
+      </section>
+      <details>
+        <summary>Parsed data</summary>
+        <div id="uuidDetails"></div>
+      </details>
+      <hr />
+      <section>
+        <h3 id="uuidDisplay"></h3>
+      </section>
+      <section>
+        <div id="uuidTable"></div>
+        <p>
+          Click on a bit to toggle it. The binary representation of the UUID is
+          color-coded by the segment it belongs to.
+        </p>
+      </section>
+    </main>
+
+    <footer class="container">
+      <small>
+        Created by <a href="https://robinpokorny.com">Robin Pokorny</a> •
+        <a href="https://github.com/robinpokorny/uuid-probe">Source code</a> • licensed under
+        <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache 2.0</a>
+      </small>
+    </footer>
+
+    <script>
+      /* Table of Contents
+        1. MODEL
+        2. STATE
+        3. COMMANDS
+        4. RENDERING
+        5. INIT
+        6. UTILS
+
+        The flow of the app is unidirectional: COMMANDS -> STATE(MODEL) -> RENDERING
+
+        The state is private and can only be modified by commands. The state is passed to the
+        rendering function, which updates the UI based on the state. The state is a UUID object,
+        which provides formatted representations of the UUID and methods to manipulate it.
+      */
+
+      /* === 1. MODEL === */
+      class UUID {
+        #uuid; // BigInt representation of the UUID
+
+        // Public read-only properties for precomputed values
+        hexSections;
+        hexString;
+        binaryString;
+        hexAndDashString;
+
+        constructor(uuid) {
+          this.#uuid = uuid;
+          this.hexString = uuid.toString(16).padStart(32, "0");
+          this.binaryString = uuid.toString(2).padStart(128, "0");
+          this.hexSections = this.hexString
+            .match(/(.{8})(.{4})(.{4})(.{4})(.{12})/)
+            .slice(1);
+          this.hexAndDashString = this.hexSections.join("-");
+        }
+
+        toggleBit = (index) => {
+          const mask = BigInt(1) << BigInt(127 - index);
+          const newUuidValue = this.#uuid ^ mask;
+          return new UUID(newUuidValue);
+        };
+
+        static fromHexString(hexString) {
+          return new UUID(BigInt(`0x${hexString.replace(/-/g, "")}`));
+        }
+      }
+
+      /* === 2. STATE === */
+      {
+        let state; // private state
+
+        // Set or update the state
+        window.setState = (uuid) => {
+          state = typeof uuid === "function" ? uuid(state) : uuid;
+
+          render(state);
+        };
+      }
+
+      /* === 3. COMMANDS === */
+      const generateUUIDv4 = () =>
+        setState(UUID.fromHexString(crypto.randomUUID()));
+
+      const generateUUIDv7 = () =>
+        setState(UUID.fromHexString(uuid4to7(crypto.randomUUID())));
+
+      const setToNil = () => setState(UUID.fromHexString(NIL_UUID));
+
+      const toggleBit = (index) => setState((uuid) => uuid.toggleBit(index));
+
+      const acceptInput = (e) => {
+        setState(UUID.fromHexString(e.target.value));
+      };
+
+      /* === 4. RENDERING === */
+      {
+        const uuidInput = document.getElementById("uuidInput");
+        const uuidDetails = document.getElementById("uuidDetails");
+        const uuidTable = document.getElementById("uuidTable");
+        const uuidDisplay = document.getElementById("uuidDisplay");
+
+
+        const renderUUIDDetails = (uuid) => {
+          const version = parseInt(uuid.hexAndDashString.charAt(14), 16);
+          let timestamp = "N/A";
+          if (version === 7) {
+            timestamp = new Date(
+              parseInt(`${uuid.hexSections[0]}${uuid.hexSections[1]}`, 16)
+            ).toISOString();
+          }
+          uuidDetails.innerHTML = `<p>Version: ${version}</p><p>Timestamp: ${timestamp}</p>`;
+        };
+
+        const renderBinaryTable = (uuid) => {
+          uuidTable.innerHTML = uuid.binaryString
+            .split("")
+            .map(
+              (bit, index) =>
+                `<div class='bit' style='background-color: ${bitIndexToColor(
+                  index
+                )}' onclick='toggleBit(${index})'>${bit}</div>`
+            )
+            .join("");
+        };
+
+        const bitIndexToColor = (index) => {
+          if (index < 32) return COLOR_PALETTE[0];
+          if (index < 48) return COLOR_PALETTE[1];
+          if (index < 64) return COLOR_PALETTE[2];
+          if (index < 80) return COLOR_PALETTE[3];
+          return COLOR_PALETTE[4];
+        };
+
+        const renderColorCodedUUID = (uuid) => {
+          uuidDisplay.innerHTML = uuid.hexSections
+            .map(
+              (seg, idx) =>
+                `<span class='uuid-segment' style='background-color: ${COLOR_PALETTE[idx]}'>${seg}</span>`
+            )
+            .join("-");
+        };
+
+        window.render = (uuid) => {
+          uuidInput.value = uuid.hexAndDashString;
+          renderUUIDDetails(uuid);
+          renderBinaryTable(uuid);
+          renderColorCodedUUID(uuid);
+          window.location.hash = uuid.hexAndDashString;
+        };
+      }
+
+      /* === 5. INIT === */
+      window.onload = () => {
+        setState(
+          UUID.fromHexString(window.location.hash.substring(1) || NIL_UUID)
+        );
+      };
+
+      /* === 6. UTILS === */
+      const COLOR_PALETTE = [
+        "#bdb2ec",
+        "#79c0ff",
+        "#0ccece",
+        "#5dd121",
+        "#e8d600",
+      ];
+      const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
+      const uuid4to7 = (uuid, now = Date.now()) => {
+        const ts = now.toString(16).padStart(12, "0");
+        return `${ts.slice(0, 8)}-${ts.slice(8)}-7${uuid.slice(15)}`;
+      };
+    </script>
+  </body>
+</html>
