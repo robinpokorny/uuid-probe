@@ -4,7 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>UUID Probe</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2210 0 100 100%22><text y=%22.90em%22 font-size=%2290%22>📡</text></svg>"></link>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2210 0 100 100%22><text y=%22.90em%22 font-size=%2290%22>📡</text></svg>"
+    />
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.jade.min.css"
@@ -49,12 +52,12 @@
       </hgroup>
     </header>
     <main class="container">
-      <section>
+      <form onsubmit="acceptInput(event)">
         <input
           type="text"
           id="uuidInput"
           placeholder="Enter UUID or generate one"
-          onblur="acceptInput"
+          onblur="acceptInput(event)"
         />
         <button type="button" class="outline" onclick="generateUUIDv4()">
           Generate UUID v4
@@ -65,7 +68,7 @@
         <button type="button" class="outline" onclick="setToNil()">
           Set to Nil
         </button>
-      </section>
+      </form>
       <details>
         <summary>Parsed data</summary>
         <div id="uuidDetails"></div>
@@ -86,7 +89,8 @@
     <footer class="container">
       <small>
         Created by <a href="https://robinpokorny.com">Robin Pokorny</a> •
-        <a href="https://github.com/robinpokorny/uuid-probe">Source code</a> • licensed under
+        <a href="https://github.com/robinpokorny/uuid-probe">Source code</a> •
+        licensed under
         <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache 2.0</a>
       </small>
     </footer>
@@ -162,7 +166,9 @@
       const toggleBit = (index) => setState((uuid) => uuid.toggleBit(index));
 
       const acceptInput = (e) => {
-        setState(UUID.fromHexString(e.target.value));
+        if (event.type === "submit") event.preventDefault();
+
+        setState(UUID.fromHexString(uuidInput.value));
       };
 
       /* === 4. RENDERING === */
@@ -171,7 +177,6 @@
         const uuidDetails = document.getElementById("uuidDetails");
         const uuidTable = document.getElementById("uuidTable");
         const uuidDisplay = document.getElementById("uuidDisplay");
-
 
         const renderUUIDDetails = (uuid) => {
           const version = parseInt(uuid.hexAndDashString.charAt(14), 16);
