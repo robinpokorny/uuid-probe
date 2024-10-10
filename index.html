@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>UUID Probe</title>
+    <!--
+      Copyright 2024 Robin Pokorny
+
+      Licensed under the Apache License, Version 2.0 (the "License");
+      you may not use this file except in compliance with the License.
+      You may obtain a copy of the License at
+
+          http://www.apache.org/licenses/LICENSE-2.0
+
+      Unless required by applicable law or agreed to in writing, software
+      distributed under the License is distributed on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+      See the License for the specific language governing permissions and
+      limitations under the License.
+    -->
     <link
       rel="icon"
       href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2210 0 100 100%22><text y=%22.90em%22 font-size=%2290%22>📡</text></svg>"
@@ -13,22 +28,44 @@
       href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.jade.min.css"
     />
     <style>
+      :root {
+        --pico-font-family-monospace: "MonoLisa", ui-monospace, SFMono-Regular,
+          "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      }
+
       #uuidDisplay,
       #uuidTable {
-        font-family: "MonoLisa", monospace;
+        font-family: var(--pico-font-family-monospace);
+        font-feature-settings: "zero";
+        margin-top: 3rem;
       }
-      #uuidDisplay span {
+      .uuid-segment {
+        position: relative;
+        display: inline-block;
         padding: 0.125rem 0.25rem;
+      }
+      .version-segment::first-letter {
+        background-color: #ccc6b4;
+      }
+      .variant-segment::before {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 1ch;
+        height: 1.8rem;
+        background-color: #ccc6b4;
+        clip-path: polygon(0 0, 100% 100%, 0 100%);
       }
       #uuidTable {
         display: grid;
         grid-template-columns: repeat(32, 1fr);
         gap: 2px;
-        margin-top: 10px;
       }
-      .bit {
+      #uuidTable .bit {
         width: 20px;
         height: 20px;
+        border: none;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -69,13 +106,14 @@
           Set to Nil
         </button>
       </form>
-      <details>
+      <details open>
         <summary>Parsed data</summary>
         <div id="uuidDetails"></div>
       </details>
       <hr />
       <section>
         <h3 id="uuidDisplay"></h3>
+        <p id="legend"></p>
       </section>
       <section>
         <div id="uuidTable"></div>
@@ -116,20 +154,60 @@
         #uuid; // BigInt representation of the UUID
 
         // Public read-only properties for precomputed values
+        binaryString;
+        decString;
         hexSections;
         hexString;
-        binaryString;
         hexAndDashString;
+        timestamp;
+        invalid;
+        version;
 
         constructor(uuid) {
           this.#uuid = uuid;
-          this.hexString = uuid.toString(16).padStart(32, "0");
-          this.binaryString = uuid.toString(2).padStart(128, "0");
+          this.hexString = uuid.toString(16).padStart(32, `0`);
+          this.binaryString = uuid.toString(2).padStart(128, `0`);
+          this.decString = uuid.toString(10);
+          this.version = Number.parseInt(this.hexString[12], 16);
           this.hexSections = this.hexString
             .match(/(.{8})(.{4})(.{4})(.{4})(.{12})/)
             .slice(1);
-          this.hexAndDashString = this.hexSections.join("-");
+          this.hexAndDashString = this.hexSections.join(`-`);
+          this.timestamp = this.#timestampParsers[this.version]?.();
+          this.invalid = this.#validate();
         }
+
+        #timestampParsers = {
+          1: () => {
+            const timestampHex =
+              this.hexSections[2].slice(1) +
+              this.hexSections[1] +
+              this.hexSections[0];
+
+            return nanoTimestampToISO(BigInt(`0x${timestampHex}`));
+          },
+          6: () => {
+            const timestampHex =
+              this.hexString.slice(0, 12) + this.hexString.slice(13, 16);
+
+            return nanoTimestampToISO(BigInt(`0x${timestampHex}`));
+          },
+          7: () => {
+            const timestamp = Number.parseInt(this.hexString.slice(0, 12), 16);
+            return new Date(timestamp).toISOString();
+          },
+        };
+
+        #validate = () => {
+          if (![1, 3, 4, 5, 6, 7, 8].includes(this.version))
+            return `Unknown version`;
+          if (this.binaryString.slice(64, 66) !== `10`)
+            return `Invalid variant`;
+          if ([1, 6, 7].includes(this.version) && !this.timestamp)
+            return `Invalid timestamp`;
+
+          return false;
+        };
 
         toggleBit = (index) => {
           const mask = BigInt(1) << BigInt(127 - index);
@@ -138,7 +216,8 @@
         };
 
         static fromHexString(hexString) {
-          return new UUID(BigInt(`0x${hexString.replace(/-/g, "")}`));
+          const sanitized = hexString.replace(/[^0-9a-f]/gi, ``);
+          return new UUID(BigInt(`0x${sanitized}`));
         }
       }
 
@@ -166,42 +245,64 @@
       const toggleBit = (index) => setState((uuid) => uuid.toggleBit(index));
 
       const acceptInput = (e) => {
-        if (event.type === "submit") event.preventDefault();
+        if (event.type === `submit`) event.preventDefault();
 
         setState(UUID.fromHexString(uuidInput.value));
       };
 
       /* === 4. RENDERING === */
       {
-        const uuidInput = document.getElementById("uuidInput");
-        const uuidDetails = document.getElementById("uuidDetails");
-        const uuidTable = document.getElementById("uuidTable");
-        const uuidDisplay = document.getElementById("uuidDisplay");
+        const uuidInput = document.getElementById(`uuidInput`);
+        const uuidDetails = document.getElementById(`uuidDetails`);
+        const uuidTable = document.getElementById(`uuidTable`);
+        const uuidDisplay = document.getElementById(`uuidDisplay`);
+        const legend = document.getElementById(`legend`);
 
         const renderUUIDDetails = (uuid) => {
-          const version = parseInt(uuid.hexAndDashString.charAt(14), 16);
-          let timestamp = "N/A";
-          if (version === 7) {
-            timestamp = new Date(
-              parseInt(`${uuid.hexSections[0]}${uuid.hexSections[1]}`, 16)
-            ).toISOString();
-          }
-          uuidDetails.innerHTML = `<p>Version: ${version}</p><p>Timestamp: ${timestamp}</p>`;
+          let timestamp = uuid.timestamp ?? `N/A`;
+          uuidDetails.innerHTML = `
+            <p>Version: <code>${uuid.version}</code></p>
+            <p>
+              Valid: <input type="checkbox" role="switch" onclick="return false;" aria-invalid=${
+                uuid.invalid ? "true" : '"false" checked'
+              } />
+              ${uuid.invalid ? `${uuid.invalid}` : ""}
+            </p>
+            <p>Integer: <code>${uuid.decString}</code></p>
+            <p>Timestamp: <code>${timestamp}</code></p>
+          `;
+        };
+
+        const renderLegend = (uuid) => {
+          const legendByVersion = LEGEND[uuid.version] ?? LEGEND[1];
+          legend.innerHTML = legendByVersion
+            .split(`;`)
+            .map(
+              (label, idx) =>
+                `<span style="color: ${COLOR_PALETTE[idx]}">${label}</span>`
+            )
+            .join(` - `);
         };
 
         const renderBinaryTable = (uuid) => {
           uuidTable.innerHTML = uuid.binaryString
-            .split("")
+            .split(``)
             .map(
               (bit, index) =>
-                `<div class='bit' style='background-color: ${bitIndexToColor(
-                  index
-                )}' onclick='toggleBit(${index})'>${bit}</div>`
+                `<div
+                    class="bit"
+                    style="background-color: ${bitIndexToColor(index)}"
+                    onclick="toggleBit(${index})"
+                    data-tooltip="#${index}"
+                  >
+                    ${bit}
+                  </div>`
             )
-            .join("");
+            .join(``);
         };
 
         const bitIndexToColor = (index) => {
+          if ([48, 49, 50, 51, 64, 65].includes(index)) return EMPHASIS_COLOR;
           if (index < 32) return COLOR_PALETTE[0];
           if (index < 48) return COLOR_PALETTE[1];
           if (index < 64) return COLOR_PALETTE[2];
@@ -211,9 +312,14 @@
 
         const renderColorCodedUUID = (uuid) => {
           uuidDisplay.innerHTML = uuid.hexSections
+            .map((hex, idx) => ({
+              hex,
+              color: COLOR_PALETTE[idx],
+              clss: { 2: `version-segment`, 3: `variant-segment` }[idx] ?? ``,
+            }))
             .map(
-              (seg, idx) =>
-                `<span class='uuid-segment' style='background-color: ${COLOR_PALETTE[idx]}'>${seg}</span>`
+              ({ hex, clss, color }) =>
+                `<span class='uuid-segment ${clss}' style='background-color: ${color}'>${hex}</span>`
             )
             .join("-");
         };
@@ -223,6 +329,7 @@
           renderUUIDDetails(uuid);
           renderBinaryTable(uuid);
           renderColorCodedUUID(uuid);
+          renderLegend(uuid);
           window.location.hash = uuid.hexAndDashString;
         };
       }
@@ -236,17 +343,37 @@
 
       /* === 6. UTILS === */
       const COLOR_PALETTE = [
-        "#bdb2ec",
-        "#79c0ff",
-        "#0ccece",
-        "#5dd121",
-        "#e8d600",
+        `#bdb2ec`,
+        `#79c0ff`,
+        `#0ccece`,
+        `#5dd121`,
+        `#e8d600`,
       ];
-      const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+      const EMPHASIS_COLOR = `#ccc6b4`;
+      const NIL_UUID = `00000000-0000-0000-0000-000000000000`;
+      const GREGORIAN_OFFSET = 122192928000000000n;
+      const LEGEND = {
+        1: `time-low;time-mid;ver + time-high;var + clock_seq; node`,
+        3: `md5_high;md5_high;ver + md5_mid;var + md5_low;md5_low`,
+        4: `random_a;random_a;ver + random_b;var + random_c;random_c`,
+        5: `sha1_high;sha1_high;ver + sha1_mid;var + sha1_low;sha1_low`,
+        6: `time_high;time_mid;ver + time_low;clock_seq;node`,
+        7: `unix_ts_ms;unix_ts_ms;ver + rand_a;var + rand_b;rand_c`,
+      };
 
       const uuid4to7 = (uuid, now = Date.now()) => {
-        const ts = now.toString(16).padStart(12, "0");
+        const ts = now.toString(16).padStart(12, `0`);
         return `${ts.slice(0, 8)}-${ts.slice(8)}-7${uuid.slice(15)}`;
+      };
+
+      const nanoTimestampToISO = (timestamp) => {
+        const unixTimestamp = Number((timestamp - GREGORIAN_OFFSET) / 10000n);
+        const nanoseconds = (timestamp - GREGORIAN_OFFSET) % 10000n;
+
+        const isoMili = new Date(unixTimestamp).toISOString().slice(0, -1);
+        const submili = nanoseconds.toString().padStart(6, `0`);
+
+        return `${isoMili}${submili}Z`;
       };
     </script>
   </body>
