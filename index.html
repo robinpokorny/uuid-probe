@@ -75,6 +75,13 @@
         font-size: 18px;
         margin-bottom: 8px;
       }
+      #timestampInput {
+        display: inline-block;
+        width: auto;
+        margin: 0 0 0 1rem;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+      }
     </style>
   </head>
   <body>
@@ -250,6 +257,11 @@
         setState(UUID.fromHexString(uuidInput.value));
       };
 
+      const updateTimestamp = (e) => {
+        const newTimestamp = new Date(e.target.value).getTime();
+        setState(UUID.fromHexString(uuid4to7(crypto.randomUUID(), newTimestamp)));
+      };
+
       /* === 4. RENDERING === */
       {
         const uuidInput = document.getElementById(`uuidInput`);
@@ -260,6 +272,24 @@
 
         const renderUUIDDetails = (uuid) => {
           let timestamp = uuid.timestamp ?? `N/A`;
+          let timestampControl = `<code>${timestamp}</code>`;
+
+          if (uuid.timestamp && [1, 6, 7].includes(uuid.version)) {
+            const dateObj = new Date(uuid.timestamp);
+            const datetimeValue = dateObj.toISOString().slice(0, -1);
+            timestampControl = `
+              <code>${timestamp}</code>
+              <input
+                id="timestampInput"
+                type="datetime-local"
+                step="0.001"
+                value="${datetimeValue}"
+                onchange="updateTimestamp(event)"
+                ${uuid.version !== 7 ? 'disabled title="Only UUIDv7 timestamps can be modified"' : ''}
+              />
+            `;
+          }
+
           uuidDetails.innerHTML = `
             <p>Version: <code>${uuid.version}</code></p>
             <p>
@@ -269,7 +299,7 @@
               ${uuid.invalid ? `${uuid.invalid}` : ""}
             </p>
             <p>Integer: <code>${uuid.decString}</code></p>
-            <p>Timestamp: <code>${timestamp}</code></p>
+            <p>Timestamp: ${timestampControl}</p>
           `;
         };
 
