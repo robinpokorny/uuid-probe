@@ -360,7 +360,7 @@
           renderBinaryTable(uuid);
           renderColorCodedUUID(uuid);
           renderLegend(uuid);
-          window.location.hash = uuid.hexAndDashString;
+          window.location.hash = uuid.hexAndDashString === NIL_UUID ? `` : uuid.hexAndDashString;
         };
       }
 
