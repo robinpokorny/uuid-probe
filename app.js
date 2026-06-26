@@ -1547,6 +1547,9 @@ const applyCustomLayoutText = (text) => {
   });
 };
 
+const FIELD_FORMAT_URL =
+  "https://github.com/robinpokorny/uuid-probe/blob/main/FIELD_FORMAT.md";
+
 const CustomLayoutCard = (desc) =>
   Card(
     {
@@ -1621,6 +1624,21 @@ const CustomLayoutCard = (desc) =>
             }),
         },
         "clear",
+      ),
+    ),
+    h(
+      "p",
+      { class: "custom-layout__help" },
+      "Field types, bit-range rules, and examples: ",
+      h(
+        "a",
+        {
+          href: FIELD_FORMAT_URL,
+          target: "_blank",
+          rel: "noopener noreferrer",
+          class: "spec-link",
+        },
+        "FIELD_FORMAT.md ↗",
       ),
     ),
     h("input", {

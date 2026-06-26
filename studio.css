@@ -269,6 +269,7 @@ a { color: var(--accent); }
   border-radius: 0 4px 4px 0;
 }
 .custom-layout__file { display: none; }
+.custom-layout__help { margin-top: 10px; font-size: 11px; color: var(--ink-3); }
 .pin-toggle {
   cursor: pointer; font-size: 13px; line-height: 1;
   padding: 2px 4px; border-radius: 4px;
