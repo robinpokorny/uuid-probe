@@ -1059,15 +1059,143 @@ const showToast = (msg = "copied") => {
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => el.classList.remove("copy-toast--on"), 900);
 };
-const copy = (text) => {
+const copy = (text, okMsg = "copied") => {
   if (!navigator.clipboard) {
     showToast("clipboard unavailable");
     return;
   }
   navigator.clipboard.writeText(text).then(
-    () => showToast("copied"),
+    () => showToast(okMsg),
     () => showToast("copy denied"),
   );
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Shareable session links
+// ═══════════════════════════════════════════════════════════════════════
+// Encode the meaningful parts of the current session into a compact,
+// URL-safe token carried in ?s=. The common case — a UUID with default
+// interface settings and no custom layout — is 18 bytes (≈24 chars).
+// Anything left at its default costs nothing beyond the fixed flag byte;
+// a pasted custom layout rides along as a second segment.
+//
+// Wire format (before base64url):
+//   byte 0       format version (1)
+//   byte 1       flags: bit0 fieldTints, bit1 dashesInHex,
+//                bit2 showLayoutEditor, bit3 autoSaveHistory,
+//                bit4 uppercaseHex, bit5 view (0=bits, 1=linear),
+//                bit6 hasKnobs, bit7 hasLayout
+//   bytes 2..17  the 16 UUID bytes
+//   byte 18      knobs = (randA << 4) | randB   — only when bit6 set
+// A custom layout, when present (bit7), is appended as a second
+// "."-joined segment: base64url(JSON) of the entries with the redundant
+// `start` dropped — it's recomputed from the contiguous tiling on decode.
+
+const SESSION_VER = 1;
+const RAND_A_CODES = ["random", "counter", "sub-ms"];
+const RAND_B_CODES = ["random", "monotonic", "node"];
+
+const b64urlEncode = (bytes) =>
+  bytesToBase64(bytes)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+const b64urlToBytes = (str) => {
+  const bin = atob(str.replace(/-/g, "+").replace(/_/g, "/"));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+};
+const b64urlEncodeText = (text) =>
+  b64urlEncode(new TextEncoder().encode(text));
+const b64urlDecodeText = (str) =>
+  new TextDecoder().decode(b64urlToBytes(str));
+
+const encodeSession = (s) => {
+  const hasKnobs =
+    s.knobs.randAMode !== "random" || s.knobs.randBMode !== "random";
+  const hasLayout = !!s.customLayout;
+  let flags = 0;
+  if (s.iface.fieldTints) flags |= 0x01;
+  if (s.iface.dashesInHex) flags |= 0x02;
+  if (s.iface.showLayoutEditor) flags |= 0x04;
+  if (s.iface.autoSaveHistory) flags |= 0x08;
+  if (s.iface.uppercaseHex) flags |= 0x10;
+  if (s.view === "linear") flags |= 0x20;
+  if (hasKnobs) flags |= 0x40;
+  if (hasLayout) flags |= 0x80;
+
+  const core = new Uint8Array(hasKnobs ? 19 : 18);
+  core[0] = SESSION_VER;
+  core[1] = flags;
+  core.set(s.bytes, 2);
+  if (hasKnobs) {
+    const a = Math.max(0, RAND_A_CODES.indexOf(s.knobs.randAMode));
+    const b = Math.max(0, RAND_B_CODES.indexOf(s.knobs.randBMode));
+    core[18] = (a << 4) | b;
+  }
+
+  let token = b64urlEncode(core);
+  if (hasLayout) {
+    const compact = s.customLayout.map(({ start, ...rest }) => rest);
+    token += "." + b64urlEncodeText(JSON.stringify(compact));
+  }
+  return token;
+};
+
+// Decode a ?s= token into a partial-state patch, or null if unreadable.
+const decodeSession = (token) => {
+  try {
+    const [coreStr, layoutStr] = token.split(".");
+    const core = b64urlToBytes(coreStr);
+    if (core.length < 18 || core[0] !== SESSION_VER) return null;
+    const flags = core[1];
+
+    const patch = {
+      bytes: core.slice(2, 18),
+      view: flags & 0x20 ? "linear" : "bits",
+      iface: {
+        fieldTints: !!(flags & 0x01),
+        dashesInHex: !!(flags & 0x02),
+        showLayoutEditor: !!(flags & 0x04),
+        autoSaveHistory: !!(flags & 0x08),
+        uppercaseHex: !!(flags & 0x10),
+      },
+    };
+
+    if (flags & 0x40 && core.length >= 19) {
+      patch.knobs = {
+        randAMode: RAND_A_CODES[(core[18] >> 4) & 0x0f] || "random",
+        randBMode: RAND_B_CODES[core[18] & 0x0f] || "random",
+      };
+    }
+
+    if (flags & 0x80 && layoutStr) {
+      const compact = JSON.parse(b64urlDecodeText(layoutStr));
+      // Rebuild each entry's `start` from the running end cursor, then let
+      // validateLayout sort/verify and return the canonical form.
+      let cursor = 0;
+      const rebuilt = compact.map((f) => {
+        const withStart = { ...f, start: cursor };
+        cursor = (f.end ?? cursor) + 1;
+        return withStart;
+      });
+      const result = validateLayout(rebuilt);
+      if (result.ok) {
+        patch.customLayout = result.layout;
+        patch.customLayoutText = JSON.stringify(result.layout, null, 2);
+      }
+    }
+    return patch;
+  } catch {
+    return null;
+  }
+};
+
+const shareSession = () => {
+  const url =
+    location.origin + location.pathname + "?s=" + encodeSession(state);
+  copy(url, "link copied");
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1301,6 +1429,15 @@ const InputBar = (desc, pretty) => {
             "button",
             { class: "btn btn--small btn--ghost", onclick: () => copy(pretty) },
             "📋 copy",
+          ),
+          h(
+            "button",
+            {
+              class: "btn btn--small btn--ghost",
+              onclick: shareSession,
+              "data-tt": "copy a link that restores this UUID, layout & settings",
+            },
+            "🔗 share",
           ),
           h(
             "button",
@@ -2495,25 +2632,41 @@ if (location.hash === "#about") {
 // throwaway v7 the user never asked to see.
 {
   const params = new URLSearchParams(location.search);
-  const uParam = params.get("uuid");
-  const gParam = params.get("gen");
-  let asyncBytes = null;
-  let initialOverride = null;
-  if (uParam) {
-    const b = parseUuid(uParam);
-    if (b) initialOverride = b;
-  }
-  if (!initialOverride && gParam) {
-    const fn = GENERATORS[gParam.toLowerCase()];
-    if (fn) {
-      const out = fn();
-      if (out && typeof out.then === "function") asyncBytes = out;
-      else initialOverride = out;
+  // ?s=<token> — a shared session (UUID + interface + knobs + layout).
+  // Takes precedence over the simpler ?uuid / ?gen deep-links.
+  const sParam = params.get("s");
+  const sessionPatch = sParam ? decodeSession(sParam) : null;
+  if (sessionPatch) {
+    state = {
+      ...state,
+      ...sessionPatch,
+      iface: { ...state.iface, ...sessionPatch.iface },
+      knobs: { ...state.knobs, ...(sessionPatch.knobs || {}) },
+    };
+    history.replaceState(null, "", location.pathname);
+    state = { ...state, history: pushRecent(state.history, state.bytes) };
+    rerender();
+  } else {
+    const uParam = params.get("uuid");
+    const gParam = params.get("gen");
+    let asyncBytes = null;
+    let initialOverride = null;
+    if (uParam) {
+      const b = parseUuid(uParam);
+      if (b) initialOverride = b;
     }
+    if (!initialOverride && gParam) {
+      const fn = GENERATORS[gParam.toLowerCase()];
+      if (fn) {
+        const out = fn();
+        if (out && typeof out.then === "function") asyncBytes = out;
+        else initialOverride = out;
+      }
+    }
+    if (initialOverride) state.bytes = initialOverride;
+    if (uParam || gParam) history.replaceState(null, "", location.pathname);
+    state = { ...state, history: pushRecent(state.history, state.bytes) };
+    rerender();
+    if (asyncBytes) asyncBytes.then((b) => setBytes(b));
   }
-  if (initialOverride) state.bytes = initialOverride;
-  if (uParam || gParam) history.replaceState(null, "", location.pathname);
-  state = { ...state, history: pushRecent(state.history, state.bytes) };
-  rerender();
-  if (asyncBytes) asyncBytes.then((b) => setBytes(b));
 }
